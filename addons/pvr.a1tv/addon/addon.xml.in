@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <addon
   id="pvr.a1tv"
-  version="0.0.1"
-  name="A1TV"
+  version="0.0.0"
+  name="A1TV PVR Client"
   provider-name="parameter-pollution">
   <requires>
     <c-pluff version="0.1"/>
@@ -11,14 +11,14 @@
   <extension
     point="xbmc.pvrclient"
     library_linux="XBMC_A1TV.pvr"
-	library_osx="XBMC_A1TV.pvr"
+    library_osx="XBMC_A1TV.pvr"
     library_wingl="XBMC_A1TV_win32.dll"
     library_windx="XBMC_A1TV_win32.dll"
     library_android="libXBMC_A1TV.so" />
   <extension point="xbmc.addon.metadata">
-    <summary lang="en">A1TV PVR Client</summary>
-    <description lang="en">XBMC PVR Client for the IPTV service from Telekom Austria</description>
-    <disclaimer lang="en">I am not responsible for what you do with this addon ;-)</disclaimer>
+    <summary>A1TV PVR Client</summary>
+    <description>XBMC PVR Client to use the IPTV service from Telekom Austria (A1TV)</description>
+    <disclaimer>The authors are not responsible for what happens to you or others when you use this addon ;-)</disclaimer>
     <platform>@OS@</platform>
   </extension>
 </addon>

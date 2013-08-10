@@ -263,6 +263,8 @@ AC_CONFIG_FILES([Makefile \
                  lib/cmyth/librefmem/Makefile \
                  addons/Makefile \
                  addons/pvr.a1tv/Makefile \
-                 addons/pvr.a1tv/addon/addon.xml])
+		 addons/pvr.iptvsimple/Makefile \
+                 addons/pvr.a1tv/addon/addon.xml
+		 addons/pvr.iptvsimple/addon/addon.xml])
 
 AC_OUTPUT

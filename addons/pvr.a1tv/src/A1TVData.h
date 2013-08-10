@@ -1,5 +1,8 @@
 #pragma once
 /*
+ *      Copyright (C) 2013 Anton Fedchin
+ *      http://github.com/afedchin/xbmc-addon-iptvsimple/
+ *
  *      Copyright (C) 2011 Pulse-Eight
  *      http://www.pulse-eight.com/
  *
@@ -23,90 +26,97 @@
 #include <vector>
 #include "platform/util/StdString.h"
 #include "client.h"
+#include "platform/threads/threads.h"
 
 struct A1TVEpgEntry
 {
   int         iBroadcastId;
-  std::string strTitle;
   int         iChannelId;
+  int         iGenreType;
+  int         iGenreSubType;
   time_t      startTime;
   time_t      endTime;
+  std::string strTitle;
   std::string strPlotOutline;
   std::string strPlot;
   std::string strIconPath;
-  int         iGenreType;
-  int         iGenreSubType;
-//  time_t      firstAired;
-//  int         iParentalRating;
-//  int         iStarRating;
-//  bool        bNotify;
-//  int         iSeriesNumber;
-//  int         iEpisodeNumber;
-//  int         iEpisodePartNumber;
-//  std::string strEpisodeName;
+  std::string strGenreString;
+};
+
+struct A1TVEpgChannel
+{
+  std::string                  strId;
+  std::string                  strName;
+  std::vector<A1TVEpgEntry> epg;
 };
 
 struct A1TVChannel
 {
-  bool                    bRadio;
-  int                     iUniqueId;
-  int                     iChannelNumber;
-  int                     iEncryptionSystem;
-  std::string             strChannelName;
-  std::string             strIconPath;
-  std::string             strStreamURL;
-  std::vector<A1TVEpgEntry> epg;
-};
-
-struct A1TVRecording
-{
-  int         iDuration;
-  int         iGenreType;
-  int         iGenreSubType;
+  bool        bRadio;
+  int         iUniqueId;
+  int         iChannelNumber;
+  int         iEncryptionSystem;
+  int         iTvgShift;
   std::string strChannelName;
-  std::string strPlotOutline;
-  std::string strPlot;
-  std::string strRecordingId;
+  std::string strLogoPath;
   std::string strStreamURL;
-  std::string strTitle;
-  time_t      recordingTime;
+  std::string strTvgId;
+  std::string strTvgName;
+  std::string strTvgLogo;
 };
 
 struct A1TVChannelGroup
 {
-  bool             bRadio;
-  int              iGroupId;
-  std::string      strGroupName;
-  std::vector<int> members;
+  bool              bRadio;
+  int               iGroupId;
+  std::string       strGroupName;
+  std::vector<int>  members;
 };
 
-class A1TVData
+class A1TVData : public PLATFORM::CThread
 {
 public:
   A1TVData(void);
   virtual ~A1TVData(void);
 
-  virtual int GetChannelsAmount(void);
+  virtual int       GetChannelsAmount(void);
   virtual PVR_ERROR GetChannels(ADDON_HANDLE handle, bool bRadio);
-  virtual bool GetChannel(const PVR_CHANNEL &channel, A1TVChannel &myChannel);
-
-  virtual int GetChannelGroupsAmount(void);
+  virtual bool      GetChannel(const PVR_CHANNEL &channel, A1TVChannel &myChannel);
+  virtual int       GetChannelGroupsAmount(void);
   virtual PVR_ERROR GetChannelGroups(ADDON_HANDLE handle, bool bRadio);
   virtual PVR_ERROR GetChannelGroupMembers(ADDON_HANDLE handle, const PVR_CHANNEL_GROUP &group);
-
   virtual PVR_ERROR GetEPGForChannel(ADDON_HANDLE handle, const PVR_CHANNEL &channel, time_t iStart, time_t iEnd);
+  virtual void      ReaplyChannelsLogos(const char * strNewPath);
+  virtual void      ReloadPlayList(const char * strNewPath);
+  virtual void      ReloadEPG(const char * strNewPath);
 
-  virtual int GetRecordingsAmount(void);
-  virtual PVR_ERROR GetRecordings(ADDON_HANDLE handle);
-
-  virtual std::string GetSettingsFile() const;
 protected:
-  virtual bool LoadDemoData(void);
+  virtual bool                 LoadPlayList(void);
+  virtual bool                 LoadEPG(time_t iStart, time_t iEnd);
+  virtual int                  GetFileContents(CStdString& url, std::string &strContent);
+  virtual A1TVChannel      *FindChannel(const std::string &strId, const std::string &strName);
+  virtual A1TVChannelGroup *FindGroup(const std::string &strName);
+  virtual A1TVEpgChannel   *FindEpg(const std::string &strId);
+  virtual A1TVEpgChannel   *FindEpgForChannel(A1TVChannel &channel);
+  virtual int                  ParseDateTime(CStdString strDate, bool iDateFormat = true);
+  virtual bool                 GzipInflate( const std::string &compressedBytes, std::string &uncompressedBytes);
+  virtual int                  GetCachedFileContents(const std::string &strCachedName, const std::string &strFilePath, std::string &strContent);
+  virtual void                 ApplyChannelsLogos();
+  virtual CStdString           ReadMarkerValue(std::string &strLine, const char * strMarkerName);
+
+protected:
+  virtual void *Process(void);
+
 private:
-  std::vector<A1TVChannelGroup> m_groups;
-  std::vector<A1TVChannel>      m_channels;
-  std::vector<A1TVRecording>    m_recordings;
-  time_t                           m_iEpgStart;
-  CStdString                       m_strDefaultIcon;
-  CStdString                       m_strDefaultMovie;
+  bool                              m_bTSOverride;
+  bool                              m_bEGPLoaded;
+  int                               m_iEPGTimeShift;
+  int                               m_iLastStart;
+  int                               m_iLastEnd;
+  CStdString                        m_strXMLTVUrl;
+  CStdString                        m_strM3uUrl;
+  CStdString                        m_strLogoPath;
+  std::vector<A1TVChannelGroup>  m_groups;
+  std::vector<A1TVChannel>       m_channels;
+  std::vector<A1TVEpgChannel>    m_epg;
 };

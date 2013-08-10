@@ -1,4 +1,9 @@
+if ADDON_MYTHTV
+          ADDITIONAL_SUBDIRS =
+endif
+
 SUBDIRS = pvr.a1tv \
+          pvr.iptvsimple \
           $(ADDITIONAL_SUBDIRS)
 
 clean:

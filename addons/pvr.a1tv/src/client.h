@@ -1,5 +1,8 @@
 #pragma once
 /*
+ *      Copyright (C) 2013 Anton Fedchin
+ *      http://github.com/afedchin/xbmc-addon-iptvsimple/
+ *
  *      Copyright (C) 2011 Pulse-Eight
  *      http://www.pulse-eight.com/
  *
@@ -22,9 +25,30 @@
 
 #include "libXBMC_addon.h"
 #include "libXBMC_pvr.h"
+#include "libXBMC_gui.h"
+
+#define PVR_CLIENT_VERSION     "0.1.3"
+#define M3U_FILE_NAME          "iptv.m3u.cache"
+#define TVG_FILE_NAME          "xmltv.xml.cache"
+
+/*!
+ * @brief PVR macros for string exchange
+ */
+#define PVR_STRCPY(dest, source) do { strncpy(dest, source, sizeof(dest)-1); dest[sizeof(dest)-1] = '\0'; } while(0)
+#define PVR_STRCLR(dest) memset(dest, 0, sizeof(dest))
 
 extern bool                          m_bCreated;
 extern std::string                   g_strUserPath;
 extern std::string                   g_strClientPath;
 extern ADDON::CHelper_libXBMC_addon *XBMC;
 extern CHelper_libXBMC_pvr          *PVR;
+
+extern std::string g_strM3UPath;
+extern std::string g_strTvgPath;
+extern std::string g_strLogoPath;
+extern int         g_iEPGTimeShift;
+extern bool        g_bTSOverride;
+
+extern std::string PathCombine(const std::string &strPath, const std::string &strFileName);
+extern std::string GetClientFilePath(const std::string &strFileName);
+extern std::string GetUserFilePath(const std::string &strFileName);
