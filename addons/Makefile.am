@@ -1,16 +1,4 @@
-if ADDON_MYTHTV
-          ADDITIONAL_SUBDIRS = pvr.mythtv.cmyth
-endif
-
-SUBDIRS = pvr.demo \
-          pvr.dvbviewer \
-          pvr.hts \
-          pvr.mediaportal.tvserver \
-          pvr.nextpvr \
-          pvr.vdr.vnsi \
-          pvr.njoy \
-          pvr.vuplus \
-          pvr.argustv \
+SUBDIRS = pvr.a1tv \
           $(ADDITIONAL_SUBDIRS)
 
 clean:
