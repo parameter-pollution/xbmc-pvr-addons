@@ -26,54 +26,19 @@
 #include <string>
 #include <fstream>
 #include <map>
-#include "zlib.h"
-#include "rapidxml/rapidxml.hpp"
+#include <math.h>
+#include <json/json.h>
 #include "A1TVData.h"
 
-#define M3U_START_MARKER        "#EXTM3U"
-#define M3U_INFO_MARKER         "#EXTINF"
-#define TVG_INFO_ID_MARKER      "tvg-id="
-#define TVG_INFO_NAME_MARKER    "tvg-name="
-#define TVG_INFO_LOGO_MARKER    "tvg-logo="
-#define TVG_INFO_SHIFT_MARKER   "tvg-shift="
-#define GROUP_NAME_MARKER       "group-title="
-#define RADIO_MARKER            "radio="
-#define CHANNEL_LOGO_EXTENSION  ".png"
+
 #define SECONDS_IN_DAY          86400
+#define EPG_URL ""
 
 using namespace std;
 using namespace ADDON;
-using namespace rapidxml;
-
-template<class Ch>
-inline bool GetNodeValue(const xml_node<Ch> * pRootNode, const char* strTag, CStdString& strStringValue)
-{
-  xml_node<Ch> *pChildNode = pRootNode->first_node(strTag);
-  if (pChildNode == NULL)
-  {
-    return false;
-  }
-  strStringValue = pChildNode->value();
-  return true;
-}
-
-template<class Ch>
-inline bool GetAttributeValue(const xml_node<Ch> * pNode, const char* strAttributeName, CStdString& strStringValue)
-{
-  xml_attribute<Ch> *pAttribute = pNode->first_attribute(strAttributeName);
-  if (pAttribute == NULL)
-  {
-    return false;
-  }
-  strStringValue = pAttribute->value();
-  return true;
-}
 
 A1TVData::A1TVData(void)
 {
-  m_strXMLTVUrl   = g_strTvgPath;
-  m_strM3uUrl     = g_strM3UPath;
-  m_strLogoPath   = g_strLogoPath;
   m_iEPGTimeShift = g_iEPGTimeShift;
   m_bTSOverride   = g_bTSOverride;
   m_iLastStart    = 0;
@@ -81,10 +46,28 @@ A1TVData::A1TVData(void)
 
   m_bEGPLoaded = false;
 
-  if (LoadPlayList())
-  {
-    XBMC->QueueNotification(QUEUE_INFO, "%d channels loaded.", m_channels.size());
-  }
+  //C++98 doesn't support list initialization at compile time so whe have to do it here. ( C++0x does allow it)
+  //TODO??: put this map into a configfile so it is easier to edit it
+  genre_map["Comedy"] =         EPG_EVENT_CONTENTMASK_SHOW;
+  genre_map["Dokumentation"] =  EPG_EVENT_CONTENTMASK_EDUCATIONALSCIENCE;
+  genre_map["Drama"] =          EPG_EVENT_CONTENTMASK_MOVIEDRAMA;
+  genre_map["Fussball"] =       EPG_EVENT_CONTENTMASK_SPORTS;
+  genre_map["Info"] =           EPG_EVENT_CONTENTMASK_EDUCATIONALSCIENCE;
+  genre_map["Kinder"] =         EPG_EVENT_CONTENTMASK_CHILDRENYOUTH;
+  genre_map["Krimi"] =          EPG_EVENT_CONTENTMASK_MOVIEDRAMA;
+  genre_map["Lifestyle"] =      EPG_EVENT_CONTENTMASK_LEISUREHOBBIES;
+  genre_map["Magazin"] =        EPG_EVENT_CONTENTMASK_LEISUREHOBBIES;
+  genre_map["News"] =           EPG_EVENT_CONTENTMASK_NEWSCURRENTAFFAIRS;
+  genre_map["Serie"] =          EPG_EVENT_CONTENTMASK_SHOW;
+  genre_map["Show"] =           EPG_EVENT_CONTENTMASK_SHOW;
+  genre_map["Spielfilm"] =      EPG_EVENT_CONTENTMASK_MOVIEDRAMA;
+  genre_map["Sport"] =          EPG_EVENT_CONTENTMASK_SPORTS;
+  genre_map["Talk"] =           EPG_EVENT_CONTENTMASK_SOCIALPOLITICALECONOMICS;
+  genre_map["Wetter"] =         EPG_EVENT_CONTENTMASK_NEWSCURRENTAFFAIRS;
+  genre_map["Romantik"] =       EPG_EVENT_CONTENTMASK_MOVIEDRAMA;
+  genre_map["Komödie"] =        EPG_EVENT_CONTENTMASK_MOVIEDRAMA;
+
+  XBMC->QueueNotification(QUEUE_INFO, "A1TV initialized");
 }
 
 void *A1TVData::Process(void)
@@ -95,397 +78,49 @@ void *A1TVData::Process(void)
 A1TVData::~A1TVData(void)
 {
   m_channels.clear();
-  m_groups.clear();
   m_epg.clear();
 }
 
-bool A1TVData::LoadEPG(time_t iStart, time_t iEnd) 
+bool A1TVData::LoadChannelList(void) 
 {
-  if (m_strXMLTVUrl.IsEmpty())
-  {
-    XBMC->Log(LOG_NOTICE, "EPG file path is not configured. EPG not loaded.");
-    m_bEGPLoaded = true;
-    return false;
+  Json::Value jsonData;
+  GetJson( GetChannelFile(),jsonData);
+
+  m_channels.clear();
+
+  int numChannels=jsonData.size();
+
+  for( int i=0; i < numChannels; i++ ){
+    Json::Value entry;
+    entry = jsonData[i];
+    PVR_CHANNEL channel;
+    memset(&channel, 0 , sizeof(channel));
+    channel.iUniqueId = entry["id"].asInt();
+    channel.iChannelNumber = entry["number"].asInt();
+    strncpy(channel.strChannelName, XBMC->UnknownToUTF8( entry["name"].asCString() ), sizeof(channel.strChannelName) - 1);
+    strncpy(channel.strStreamURL, entry["streamURL"].asCString(), sizeof(channel.strStreamURL) - 1);
+    strncpy(channel.strIconPath, entry["icon"].asCString(), sizeof(channel.strIconPath) - 1);
+    m_channels.push_back(channel);
   }
-
-  std::string data;
-  std::string decompressed;
-  int iReaded = 0;
-
-  int iCount = 0;
-  while(iCount < 3) // max 3 tries
-  {
-    if ((iReaded = GetCachedFileContents(TVG_FILE_NAME, m_strXMLTVUrl, data)) != 0) 
-    {
-      break;
-    }
-    XBMC->Log(LOG_ERROR, "Unable to load EPG file '%s':  file is missing or empty. :%dth try.", m_strXMLTVUrl.c_str(), ++iCount);
-    if (iCount < 3)
-    {
-      usleep(5 * 1000 * 1000); // sleep 5 sec before next try.
-    }
-  }
-  
-  if (iReaded == 0)
-  {
-    XBMC->Log(LOG_ERROR, "Unable to load EPG file '%s':  file is missing or empty. After %d tries.", m_strXMLTVUrl.c_str(), iCount);
-    m_bEGPLoaded = true;
-    return false;
-  }
-
-  char * buffer;
-
-  // gzip packed
-  if (data[0] == '\x1F' && data[1] == '\x8B' && data[2] == '\x08') 
-  {
-    if (!GzipInflate(data, decompressed))
-    {
-      XBMC->Log(LOG_ERROR, "Invalid EPG file '%s': unable to decompress file.", m_strXMLTVUrl.c_str());
-      m_bEGPLoaded = true;
-      return false;
-    }
-    buffer = &(decompressed[0]);
-  }
-  else
-  {
-    buffer = &(data[0]);
-  }
-
-  // xml should starts with '<?xml'
-  if (buffer[0] != '\x3C' || buffer[1] != '\x3F' || buffer[2] != '\x78' ||
-      buffer[3] != '\x6D' || buffer[4] != '\x6C')
-  {
-    // check for tar archive
-    if (strcmp(buffer + 0x101, "ustar") || strcmp(buffer + 0x101, "GNUtar"))
-    {
-      buffer += 0x200; // RECORDSIZE = 512
-    }
-    else
-    {
-      XBMC->Log(LOG_ERROR, "Invalid EPG file '%s': unable to decompress file.", m_strXMLTVUrl.c_str());
-      m_bEGPLoaded = true;
-      return false;
-    }
-  }
-
-  xml_document<> xmlDoc;
-  try 
-  {
-    xmlDoc.parse<0>(buffer);
-  } 
-  catch(parse_error p) 
-  {
-    XBMC->Log(LOG_ERROR, "Unable parse EPG XML: %s", p.what());
-    m_bEGPLoaded = true;
-    return false;
-  }
-
-  xml_node<> *pRootElement = xmlDoc.first_node("tv");
-  if (!pRootElement)
-  {
-    XBMC->Log(LOG_ERROR, "Invalid EPG XML: no <tv> tag found");
-    m_bEGPLoaded = true;
-    return false;
-  }
-
-  // clear previously loaded epg
-  if (m_epg.size() > 0) 
-  {
-    m_epg.clear();
-  }
-
-  int iBroadCastId = 0;
-  xml_node<> *pChannelNode = NULL;
-  for(pChannelNode = pRootElement->first_node("channel"); pChannelNode; pChannelNode = pChannelNode->next_sibling("channel"))
-  {
-    CStdString strName;
-    CStdString strId;
-    if(!GetAttributeValue(pChannelNode, "id", strId))
-    {
-      continue;
-    }
-    GetNodeValue(pChannelNode, "display-name", strName);
-
-    if (FindChannel(strId, strName) == NULL)
-    {
-      continue;
-    }
-
-    A1TVEpgChannel epgChannel;
-    epgChannel.strId = strId;
-    epgChannel.strName = strName;
-
-    m_epg.push_back(epgChannel);
-  }
-
-  if (m_epg.size() == 0) 
-  {
-    XBMC->Log(LOG_ERROR, "EPG channels not found.");
-    return false;
-  }
-  
-  int iMinShiftTime = m_iEPGTimeShift;
-  int iMaxShiftTime = m_iEPGTimeShift;
-  if (!m_bTSOverride)
-  {
-    iMinShiftTime = SECONDS_IN_DAY;
-    iMaxShiftTime = -SECONDS_IN_DAY;
-
-    vector<A1TVChannel>::iterator it;
-    for (it = m_channels.begin(); it < m_channels.end(); it++)
-    {
-      if (it->iTvgShift + m_iEPGTimeShift < iMinShiftTime)
-        iMinShiftTime = it->iTvgShift + m_iEPGTimeShift;
-      if (it->iTvgShift + m_iEPGTimeShift > iMaxShiftTime)
-        iMaxShiftTime = it->iTvgShift + m_iEPGTimeShift;
-    }
-  }
-
-  CStdString strEmpty = "";
-  A1TVEpgChannel *epg = NULL;
-  for(pChannelNode = pRootElement->first_node("programme"); pChannelNode; pChannelNode = pChannelNode->next_sibling("programme"))
-  {
-    CStdString strId;
-    if (!GetAttributeValue(pChannelNode, "channel", strId))
-      continue;
-
-    if (epg == NULL || epg->strId != strId) 
-    {
-      if ((epg = FindEpg(strId)) == NULL) 
-        continue;
-    }
-
-    CStdString strStart;
-    CStdString strStop;
-
-    if (!GetAttributeValue(pChannelNode, "start", strStart) || !GetAttributeValue(pChannelNode, "stop", strStop)) 
-    {
-      continue;
-    }
-
-    int iTmpStart = ParseDateTime(strStart);
-    int iTmpEnd = ParseDateTime(strStop);
-
-    if ((iTmpEnd + iMaxShiftTime < iStart) || (iTmpStart + iMinShiftTime > iEnd))
-    {
-      continue;
-    }
-
-    CStdString strTitle;
-    CStdString strCategory;
-    CStdString strDesc;
-
-    GetNodeValue(pChannelNode, "title", strTitle);
-    GetNodeValue(pChannelNode, "category", strCategory);
-    GetNodeValue(pChannelNode, "desc", strDesc);
-
-    A1TVEpgEntry entry;
-    entry.iBroadcastId    = ++iBroadCastId;
-    entry.iGenreType      = 0;
-    entry.iGenreSubType   = 0;
-    entry.strTitle        = strTitle;
-    entry.strPlot         = strDesc;
-    entry.strPlotOutline  = "";
-    entry.startTime       = iTmpStart;
-    entry.endTime         = iTmpEnd;
-    entry.strGenreString  = strCategory;
-
-    epg->epg.push_back(entry);
-  }
-
-  xmlDoc.clear();
-  m_bEGPLoaded = true;
-
-  XBMC->Log(LOG_NOTICE, "EPG Loaded.");
-
-  return true;
-}
-
-bool A1TVData::LoadPlayList(void) 
-{
-  if (m_strM3uUrl.IsEmpty())
-  {
-    XBMC->Log(LOG_NOTICE, "Playlist file path is not configured. Channels not loaded.");
-    return false;
-  }
-
-  CStdString strPlaylistContent;
-  if (!GetCachedFileContents(M3U_FILE_NAME, m_strM3uUrl, strPlaylistContent))
-  {
-    XBMC->Log(LOG_ERROR, "Unable to load playlist file '%s':  file is missing or empty.", m_strM3uUrl.c_str());
-    return false;
-  }
-
-  std::stringstream stream(strPlaylistContent);
-
-  /* load channels */
-  bool bFirst = true;
-
-  int iUniqueChannelId  = 0;
-  int iUniqueGroupId    = 0;
-  int iCurrentGroupId   = 0;
-  int iChannelNum       = 0;
-  int iEPGTimeShift     = 0;
-
-  A1TVChannel tmpChannel;
-  tmpChannel.strTvgId       = "";
-  tmpChannel.strChannelName = "";
-  tmpChannel.strTvgName     = "";
-  tmpChannel.strTvgLogo     = "";
-  tmpChannel.iTvgShift      = 0;
-
-  char szLine[1024];
-  while(stream.getline(szLine, 1024)) 
-  {
-  
-    CStdString strLine = "";
-    strLine.append(szLine);
-    strLine.TrimRight(" \t\r\n");
-    strLine.TrimLeft(" \t");
-
-    if (strLine.IsEmpty())
-    {
-      continue;
-    }
-
-    if (bFirst) 
-    {
-      bFirst = false;
-      if (strLine.Left(3) == "\xEF\xBB\xBF")
-      {
-        strLine.Delete(0, 3);
-      }
-      if (strLine.Left((int)strlen(M3U_START_MARKER)) == M3U_START_MARKER) 
-      {
-        double fTvgShift = atof(ReadMarkerValue(strLine, TVG_INFO_SHIFT_MARKER));
-        iEPGTimeShift = (int) (fTvgShift * 3600.0);
-        continue;
-      }
-      else
-      {
-        break;
-      }
-    }
-
-    if (strLine.Left((int)strlen(M3U_INFO_MARKER)) == M3U_INFO_MARKER) 
-    {
-      bool        bRadio       = false;
-      double      fTvgShift    = 0;
-      CStdString  strChnlName  = "";
-      CStdString  strTvgId     = "";
-      CStdString  strTvgName   = "";
-      CStdString  strTvgLogo   = "";
-      CStdString  strGroupName = "";
-      CStdString  strRadio     = "";
-
-      // parse line
-      int iColon = (int)strLine.Find(':');
-      int iComma = (int)strLine.ReverseFind(',');
-      if (iColon >= 0 && iComma >= 0 && iComma > iColon) 
-      {
-        // parse name
-        iComma++;
-        strChnlName = strLine.Right((int)strLine.size() - iComma).Trim();
-        tmpChannel.strChannelName = XBMC->UnknownToUTF8(strChnlName);
-
-        // parse info
-        CStdString strInfoLine = strLine.Mid(++iColon, --iComma - iColon);
-
-        strTvgId      = ReadMarkerValue(strInfoLine, TVG_INFO_ID_MARKER);
-        strTvgName    = ReadMarkerValue(strInfoLine, TVG_INFO_NAME_MARKER);
-        strTvgLogo    = ReadMarkerValue(strInfoLine, TVG_INFO_LOGO_MARKER);
-        strGroupName  = ReadMarkerValue(strInfoLine, GROUP_NAME_MARKER);
-        strRadio      = ReadMarkerValue(strInfoLine, RADIO_MARKER);
-        fTvgShift     = atof(ReadMarkerValue(strInfoLine, TVG_INFO_SHIFT_MARKER));
-
-        if (strTvgId.IsEmpty())
-        {
-          char buff[255];
-          sprintf(buff, "%d", atoi(strInfoLine));
-          strTvgId.append(buff);
-        }
-        if (strTvgLogo.IsEmpty())
-        {
-          strTvgLogo = strChnlName;
-        }
-
-        bRadio                = !strRadio.CompareNoCase("true");
-        tmpChannel.strTvgId   = strTvgId;
-        tmpChannel.strTvgName = XBMC->UnknownToUTF8(strTvgName);
-        tmpChannel.strTvgLogo = XBMC->UnknownToUTF8(strTvgLogo);
-        tmpChannel.iTvgShift  = (int)(fTvgShift * 3600.0);
-        tmpChannel.bRadio     = bRadio;
-
-        if (tmpChannel.iTvgShift == 0 && iEPGTimeShift != 0)
-        {
-          tmpChannel.iTvgShift = iEPGTimeShift;
-        }
-
-        if (!strGroupName.IsEmpty())
-        {
-          strGroupName = XBMC->UnknownToUTF8(strGroupName);
-
-          A1TVChannelGroup * pGroup;
-          if ((pGroup = FindGroup(strGroupName)) == NULL)
-          {
-            A1TVChannelGroup group;
-            group.strGroupName = strGroupName;
-            group.iGroupId = ++iUniqueGroupId;
-            group.bRadio = bRadio;
-
-            m_groups.push_back(group);
-            iCurrentGroupId = iUniqueGroupId;
-          }
-          else
-          {
-            iCurrentGroupId = pGroup->iGroupId;
-          }
-        }
-      }
-    } 
-    else if (strLine[0] != '#')
-    {
-      A1TVChannel channel;
-      channel.iUniqueId         = ++iUniqueChannelId;
-      channel.iChannelNumber    = ++iChannelNum;
-      channel.strTvgId          = tmpChannel.strTvgId;
-      channel.strChannelName    = tmpChannel.strChannelName;
-      channel.strTvgName        = tmpChannel.strTvgName;
-      channel.strTvgLogo        = tmpChannel.strTvgLogo;
-      channel.iTvgShift         = tmpChannel.iTvgShift;
-      channel.bRadio            = tmpChannel.bRadio;
-      channel.strStreamURL      = strLine;
-      channel.iEncryptionSystem = 0;
-
-      if (iCurrentGroupId > 0) 
-      {
-        channel.bRadio = m_groups.at(iCurrentGroupId - 1).bRadio;
-        m_groups.at(iCurrentGroupId - 1).members.push_back(channel.iChannelNumber);
-      }
-
-      m_channels.push_back(channel);
-
-      tmpChannel.strTvgId       = "";
-      tmpChannel.strChannelName = "";
-      tmpChannel.strTvgName     = "";
-      tmpChannel.strTvgLogo     = "";
-      tmpChannel.iTvgShift      = 0;
-      tmpChannel.bRadio         = false;
-    }
-  }
-  
-  stream.clear();
-
-  if (m_channels.size() == 0)
-  {
-    XBMC->Log(LOG_ERROR, "Unable to load channels from file '%s':  file is corrupted.", m_strM3uUrl.c_str());
-    return false;
-  }
-
-  ApplyChannelsLogos();
 
   XBMC->Log(LOG_NOTICE, "Loaded %d channels.", m_channels.size());
   return true;
+}
+
+bool A1TVData::GetJson(std::string url, Json::Value &response){
+  std::string strJson;
+  Json::Reader jsonReader;
+  GetFileContents(url,strJson);
+  return jsonReader.parse(strJson, response);
+}
+
+void A1TVData::DeepCopyChannel(PVR_CHANNEL &src, PVR_CHANNEL &dst){
+  memset(&dst, 0 , sizeof(dst));
+  dst.iUniqueId=src.iUniqueId;
+  dst.iChannelNumber=src.iChannelNumber;
+  strncpy(dst.strChannelName, src.strChannelName, sizeof(dst.strChannelName) - 1);
+  strncpy(dst.strStreamURL, src.strStreamURL, sizeof(dst.strStreamURL) - 1);
+  strncpy(dst.strIconPath, src.strIconPath, sizeof(dst.strIconPath) - 1);
 }
 
 int A1TVData::GetChannelsAmount(void)
@@ -495,168 +130,118 @@ int A1TVData::GetChannelsAmount(void)
 
 PVR_ERROR A1TVData::GetChannels(ADDON_HANDLE handle, bool bRadio)
 {
-  for (unsigned int iChannelPtr = 0; iChannelPtr < m_channels.size(); iChannelPtr++)
+  LoadChannelList();
+
+  for ( int i = 0; i < m_channels.size(); i++)
   {
-    A1TVChannel &channel = m_channels.at(iChannelPtr);
-    if (channel.bRadio == bRadio)
-    {
-      PVR_CHANNEL xbmcChannel;
-      memset(&xbmcChannel, 0, sizeof(PVR_CHANNEL));
-
-      xbmcChannel.iUniqueId         = channel.iUniqueId;
-      xbmcChannel.bIsRadio          = channel.bRadio;
-      xbmcChannel.iChannelNumber    = channel.iChannelNumber;
-      strncpy(xbmcChannel.strChannelName, channel.strChannelName.c_str(), sizeof(xbmcChannel.strChannelName) - 1);
-      strncpy(xbmcChannel.strStreamURL, channel.strStreamURL.c_str(), sizeof(xbmcChannel.strStreamURL) - 1);
-      xbmcChannel.iEncryptionSystem = channel.iEncryptionSystem;
-      strncpy(xbmcChannel.strIconPath, channel.strLogoPath.c_str(), sizeof(xbmcChannel.strIconPath) - 1);
-      xbmcChannel.bIsHidden         = false;
-
-      PVR->TransferChannelEntry(handle, &xbmcChannel);
-    }
+    PVR_CHANNEL tmp;
+    DeepCopyChannel(m_channels.at(i), tmp);
+    PVR->TransferChannelEntry(handle, &tmp );
   }
 
   return PVR_ERROR_NO_ERROR;
 }
 
-bool A1TVData::GetChannel(const PVR_CHANNEL &channel, A1TVChannel &myChannel)
+bool A1TVData::GetChannel(const PVR_CHANNEL &channel, PVR_CHANNEL &myChannel)
 {
-  for (unsigned int iChannelPtr = 0; iChannelPtr < m_channels.size(); iChannelPtr++)
-  {
-    A1TVChannel &thisChannel = m_channels.at(iChannelPtr);
-    if (thisChannel.iUniqueId == (int) channel.iUniqueId)
-    {
-      myChannel.iUniqueId         = thisChannel.iUniqueId;
-      myChannel.bRadio            = thisChannel.bRadio;
-      myChannel.iChannelNumber    = thisChannel.iChannelNumber;
-      myChannel.iEncryptionSystem = thisChannel.iEncryptionSystem;
-      myChannel.strChannelName    = thisChannel.strChannelName;
-      myChannel.strLogoPath       = thisChannel.strLogoPath;
-      myChannel.strStreamURL      = thisChannel.strStreamURL;
-
-      return true;
-    }
-  }
-
   return false;
 }
 
-int A1TVData::GetChannelGroupsAmount(void)
-{
-  return m_groups.size();
-}
-
-PVR_ERROR A1TVData::GetChannelGroups(ADDON_HANDLE handle, bool bRadio)
-{
-  for (unsigned int iGroupPtr = 0; iGroupPtr < m_groups.size(); iGroupPtr++)
-  {
-    A1TVChannelGroup &group = m_groups.at(iGroupPtr);
-    if (group.bRadio == bRadio)
-    {
-      PVR_CHANNEL_GROUP xbmcGroup;
-      memset(&xbmcGroup, 0, sizeof(PVR_CHANNEL_GROUP));
-
-      xbmcGroup.bIsRadio = bRadio;
-      strncpy(xbmcGroup.strGroupName, group.strGroupName.c_str(), sizeof(xbmcGroup.strGroupName) - 1);
-
-      PVR->TransferChannelGroup(handle, &xbmcGroup);
-    }
-  }
-
-  return PVR_ERROR_NO_ERROR;
-}
-
-PVR_ERROR A1TVData::GetChannelGroupMembers(ADDON_HANDLE handle, const PVR_CHANNEL_GROUP &group)
-{
-  for (unsigned int iGroupPtr = 0; iGroupPtr < m_groups.size(); iGroupPtr++)
-  {
-    A1TVChannelGroup &myGroup = m_groups.at(iGroupPtr);
-    if (!strcmp(myGroup.strGroupName.c_str(),group.strGroupName))
-    {
-      for (unsigned int iChannelPtr = 0; iChannelPtr < myGroup.members.size(); iChannelPtr++)
-      {
-        int iId = myGroup.members.at(iChannelPtr) - 1;
-        if (iId < 0 || iId > (int)m_channels.size() - 1)
-          continue;
-        A1TVChannel &channel = m_channels.at(iId);
-        PVR_CHANNEL_GROUP_MEMBER xbmcGroupMember;
-        memset(&xbmcGroupMember, 0, sizeof(PVR_CHANNEL_GROUP_MEMBER));
-
-        strncpy(xbmcGroupMember.strGroupName, group.strGroupName, sizeof(xbmcGroupMember.strGroupName) - 1);
-        xbmcGroupMember.iChannelUniqueId = channel.iUniqueId;
-        xbmcGroupMember.iChannelNumber   = channel.iChannelNumber;
-
-        PVR->TransferChannelGroupMember(handle, &xbmcGroupMember);
-      }
-    }
-  }
-
-  return PVR_ERROR_NO_ERROR;
-}
 
 PVR_ERROR A1TVData::GetEPGForChannel(ADDON_HANDLE handle, const PVR_CHANNEL &channel, time_t iStart, time_t iEnd)
 {
-  vector<A1TVChannel>::iterator myChannel;
-  for (myChannel = m_channels.begin(); myChannel < m_channels.end(); myChannel++)
-  {
-    if (myChannel->iUniqueId != (int) channel.iUniqueId)
-    {
-      continue;
-    }
+  Json::Value jsonData;
+  struct tm *startTime;
+  startTime= localtime(&iStart);
 
-    if (!m_bEGPLoaded || 
-      iStart > m_iLastStart || iEnd > m_iLastEnd) 
-    {
-      if (LoadEPG(iStart, iEnd))
-      {
-        m_iLastStart = iStart;
-        m_iLastEnd = iEnd;
-      }
-    }
-
-    A1TVEpgChannel *epg;
-    if ((epg = FindEpgForChannel(*myChannel)) == NULL
-      || epg->epg.size() == 0)
-    {
-      return PVR_ERROR_NO_ERROR;
-    }
-
-    int iShift = m_bTSOverride ? m_iEPGTimeShift : myChannel->iTvgShift + m_iEPGTimeShift;
-
-    vector<A1TVEpgEntry>::iterator myTag;
-    for (myTag = epg->epg.begin(); myTag < epg->epg.end(); myTag++)
-    {
-      if ((myTag->endTime + iShift) < iStart) 
-        continue;
-
-      EPG_TAG tag;
-      memset(&tag, 0, sizeof(EPG_TAG));
-
-      tag.iUniqueBroadcastId  = myTag->iBroadcastId;
-      tag.strTitle            = myTag->strTitle.c_str();
-      tag.iChannelNumber      = myTag->iChannelId;
-      tag.startTime           = myTag->startTime + iShift;
-      tag.endTime             = myTag->endTime + iShift;
-      tag.strPlotOutline      = myTag->strPlotOutline.c_str();
-      tag.strPlot             = myTag->strPlot.c_str();
-      tag.strIconPath         = myTag->strIconPath.c_str();
-      tag.iGenreType          = EPG_GENRE_USE_STRING;        //myTag.iGenreType;
-      tag.iGenreSubType       = 0;                           //myTag.iGenreSubType;
-      tag.strGenreDescription = myTag->strGenreString.c_str();
-
-      PVR->TransferEpgEntry(handle, &tag);
-
-      if ((myTag->startTime + iShift) > iEnd)
-        break;
-    }
-
-    return PVR_ERROR_NO_ERROR;
+  char tmp[256];
+  // 20130811T2300/2H
+  snprintf(tmp, 256, "http://epggw.a1.net/a/api.mobile.event.list?type=JSON.1&stationuid=%d&period=%04d%02d%02dT%02d%02d/%dH",
+               channel.iUniqueId, //specify the channel we want
+               startTime->tm_year + 1900, startTime->tm_mon + 1, startTime->tm_mday, startTime->tm_hour, startTime->tm_min, //period current time
+               (int)ceil(difftime(iEnd,iStart)/3600));
+  std::string url = tmp;
+  if( !GetJson( url,jsonData) ){
+    XBMC->Log(LOG_ERROR, "JSON request/parsing of epg data went wrong :(");
+    return PVR_ERROR_FAILED;
   }
+  int station_hack=0;
+  Json::Value entries=jsonData["data"][station_hack]["Station"]["Events"];
+  int numEntries=entries.size();
 
+  XBMC->Log(LOG_NOTICE,"json is fetched and parsed. has to be dissected now. number of entries: %d",numEntries);
+
+  for( int i=0; i < numEntries; i++ ){
+    Json::Value entry = entries[i];
+
+    EPG_TAG broadcast;
+    memset(&broadcast, 0 , sizeof(broadcast));
+
+    if( !entry["Title"] || !entry["ID"] || !entry["StartTime"] || !entry["EndTime"] ){
+          XBMC->Log(LOG_ERROR, "json data missing/corrupted");
+          return PVR_ERROR_FAILED;
+    } 
+
+    broadcast.iUniqueBroadcastId = (unsigned int)strtol(entry["ID"].asCString(),NULL,0); 
+    broadcast.strTitle = XBMC->UnknownToUTF8( entry["Title"].asCString() );
+    broadcast.iChannelNumber = channel.iChannelNumber;
+    broadcast.startTime = ParseEPGDate(entry["StartTime"].asCString());
+   // XBMC->Log(LOG_NOTICE, "parsing epgdate: %d", ParseEPGDate(entry["StartTime"].asCString()));
+    broadcast.endTime = ParseEPGDate(entry["EndTime"].asCString());
+  //  XBMC->Log(LOG_NOTICE, "parsing epgdate: %d", ParseEPGDate(entry["EndTime"].asCString()));
+
+    //genre hacks
+    //broadcast.iGenreType=EPG_GENRE_USE_STRING;
+    //broadcast.strGenreDescription=XBMC->UnknownToUTF8( entry["Genre"].asCString() );
+    //broadcast.strGenreDescription=entry.get("Genre","None").asCString();
+    //broadcast.iGenreType=EPG_EVENT_CONTENTMASK_MOVIEDRAMA;
+    broadcast.iGenreType=GetGenreType(entry["Genre"].asString());
+    if( broadcast.iGenreType == EPG_GENRE_USE_STRING ){
+      XBMC->Log(LOG_NOTICE, "unrecognized genre: %s. using string fallback!", entry["Genre"].asCString());
+      broadcast.strGenreDescription=XBMC->UnknownToUTF8( entry["Genre"].asCString() );
+    }
+
+    //not implemented in xbmc yet:
+    //broadcast.strEpisodeName=entry.get("SubTitle", "").asCString();
+    broadcast.strIconPath=entry.get("Image", "").asCString();
+    
+    PVR->TransferEpgEntry(handle, &broadcast);
+
+  }
   return PVR_ERROR_NO_ERROR;
 }
 
-int A1TVData::GetFileContents(CStdString& url, std::string &strContent)
+int A1TVData::GetGenreType( std::string strGenre)
+{
+  if( genre_map.find(strGenre) != genre_map.end() ){
+    return genre_map[strGenre];
+  }
+  return EPG_GENRE_USE_STRING;
+}
+
+time_t A1TVData::ParseEPGDate(CStdString strDate)
+{
+ /*
+  "StartTime": "2013-08-12T00:35",
+  "EndTime": "2013-08-12T01:15",
+  */
+  time_t rawtime;
+  struct tm *tmptime;
+  int year, month, day, hour, minute;
+
+  sscanf(strDate, "%d-%d-%dT%d:%d",&year,&month,&day,&hour,&minute);
+  time(&rawtime);
+  tmptime = localtime(&rawtime);
+  tmptime->tm_year=year-1900;
+  tmptime->tm_mon=month-1;
+  tmptime->tm_mday=day;
+  tmptime->tm_hour=hour;
+  tmptime->tm_min=minute;
+  tmptime->tm_sec=0;
+  return mktime(tmptime);
+}
+
+int A1TVData::GetFileContents(std::string url, std::string &strContent)
 {
   strContent.clear();
   void* fileHandle = XBMC->OpenFile(url.c_str(), 0);
@@ -671,285 +256,6 @@ int A1TVData::GetFileContents(CStdString& url, std::string &strContent)
   return strContent.length();
 }
 
-int A1TVData::ParseDateTime(CStdString strDate, bool iDateFormat)
-{
-  struct tm timeinfo;
-  memset(&timeinfo, 0, sizeof(tm));
-
-  if (iDateFormat)
-  {
-    sscanf(strDate, "%04d%02d%02d%02d%02d%02d", &timeinfo.tm_year, &timeinfo.tm_mon, &timeinfo.tm_mday, &timeinfo.tm_hour, &timeinfo.tm_min, &timeinfo.tm_sec);
-  }
-  else
-  {
-    sscanf(strDate, "%02d.%02d.%04d%02d:%02d:%02d", &timeinfo.tm_mday, &timeinfo.tm_mon, &timeinfo.tm_year, &timeinfo.tm_hour, &timeinfo.tm_min, &timeinfo.tm_sec);
-  }
-
-  timeinfo.tm_mon  -= 1;
-  timeinfo.tm_year -= 1900;
-  timeinfo.tm_isdst = -1;
-
-  return mktime(&timeinfo);
-}
-
-A1TVChannel * A1TVData::FindChannel(const std::string &strId, const std::string &strName)
-{
-  CStdString strTvgName = strName;
-  strTvgName.Replace(' ', '_');
-
-  vector<A1TVChannel>::iterator it;
-  for(it = m_channels.begin(); it < m_channels.end(); it++)
-  {
-    if (it->strTvgId == strId)
-    {
-      return &*it;
-    }
-    if (strTvgName == "") 
-    {
-      continue;
-    }
-    if (it->strTvgName == strTvgName)
-    {
-      return &*it;
-    }
-    if (it->strChannelName == strName)
-    {
-      return &*it;
-    }
-  }
-
-  return NULL;
-}
-
-A1TVChannelGroup * A1TVData::FindGroup(const std::string &strName)
-{
-  vector<A1TVChannelGroup>::iterator it;
-  for(it = m_groups.begin(); it < m_groups.end(); it++)
-  {
-    if (it->strGroupName == strName)
-    {
-      return &*it;
-    }
-  }
-
-  return NULL;
-}
-
-A1TVEpgChannel * A1TVData::FindEpg(const std::string &strId)
-{
-  vector<A1TVEpgChannel>::iterator it;
-  for(it = m_epg.begin(); it < m_epg.end(); it++)
-  {
-    if (it->strId == strId)
-    {
-      return &*it;
-    }
-  }
-
-  return NULL;
-}
-
-A1TVEpgChannel * A1TVData::FindEpgForChannel(A1TVChannel &channel)
-{
-  vector<A1TVEpgChannel>::iterator it;
-  for(it = m_epg.begin(); it < m_epg.end(); it++)
-  {
-    if (it->strId == channel.strTvgId)
-    {
-      return &*it;
-    }
-    CStdString strName = it->strName;
-    strName.Replace(' ', '_');
-    if (strName == channel.strTvgName
-      || it->strName == channel.strTvgName)
-    {
-      return &*it;
-    }
-    if (it->strName == channel.strChannelName)
-    {
-      return &*it;
-    }
-  }
-
-  return NULL;
-}
-
-/*
- * This method uses zlib to decompress a gzipped file in memory.
- * Author: Andrew Lim Chong Liang
- * http://windrealm.org
- */
-bool A1TVData::GzipInflate( const std::string& compressedBytes, std::string& uncompressedBytes ) {  
-
-#define HANDLE_CALL_ZLIB(status) {   \
-  if(status != Z_OK) {        \
-    free(uncomp);             \
-    return false;             \
-  }                           \
-}
-
-  if ( compressedBytes.size() == 0 ) 
-  {  
-    uncompressedBytes = compressedBytes ;  
-    return true ;  
-  }  
-  
-  uncompressedBytes.clear() ;  
-  
-  unsigned full_length = compressedBytes.size() ;  
-  unsigned half_length = compressedBytes.size() / 2;  
-  
-  unsigned uncompLength = full_length ;  
-  char* uncomp = (char*) calloc( sizeof(char), uncompLength );  
-  
-  z_stream strm;  
-  strm.next_in = (Bytef *) compressedBytes.c_str();  
-  strm.avail_in = compressedBytes.size() ;  
-  strm.total_out = 0;  
-  strm.zalloc = Z_NULL;  
-  strm.zfree = Z_NULL;  
-  
-  bool done = false ;  
-  
-  HANDLE_CALL_ZLIB(inflateInit2(&strm, (16+MAX_WBITS)));
-  
-  while (!done) 
-  {  
-    // If our output buffer is too small  
-    if (strm.total_out >= uncompLength ) 
-    {
-      // Increase size of output buffer  
-      uncomp = (char *) realloc(uncomp, uncompLength + half_length);
-      if (uncomp == NULL)
-        return false;
-      uncompLength += half_length ;  
-    }  
-  
-    strm.next_out = (Bytef *) (uncomp + strm.total_out);  
-    strm.avail_out = uncompLength - strm.total_out;  
-  
-    // Inflate another chunk.  
-    int err = inflate (&strm, Z_SYNC_FLUSH);  
-    if (err == Z_STREAM_END) 
-      done = true;  
-    else if (err != Z_OK)  
-    {  
-      break;  
-    }  
-  }  
-  
-  HANDLE_CALL_ZLIB(inflateEnd (&strm));
-  
-  for ( size_t i=0; i<strm.total_out; ++i ) 
-  {  
-    uncompressedBytes += uncomp[ i ];  
-  }  
-
-  free( uncomp );  
-  return true ;  
-}  
-
-int A1TVData::GetCachedFileContents(const std::string &strCachedName, const std::string &filePath, std::string &strContents)
-{
-  bool bNeedReload = false;
-  CStdString strCachedPath = GetUserFilePath(strCachedName);
-  CStdString strFilePath = filePath;
-
-  if (XBMC->FileExists(strCachedPath, false)) 
-  {
-    struct __stat64 statCached;
-    struct __stat64 statOrig;
-
-    XBMC->StatFile(strCachedPath, &statCached);
-    XBMC->StatFile(strFilePath, &statOrig);
-
-    bNeedReload = statCached.st_mtime < statOrig.st_mtime;
-  } 
-  else 
-  {
-    bNeedReload = true;
-  }
-
-  if (bNeedReload) 
-  {
-    GetFileContents(strFilePath, strContents);
-    if (strContents.length() > 0) 
-    {
-      void* fileHandle = XBMC->OpenFileForWrite(strCachedPath, true);
-      if (fileHandle)
-      {
-        XBMC->WriteFile(fileHandle, strContents.c_str(), strContents.length());
-        XBMC->CloseFile(fileHandle);
-      }
-    }
-    return strContents.length();
-  } 
-
-  return GetFileContents(strCachedPath, strContents);
-}
-
-void A1TVData::ApplyChannelsLogos()
-{
-  if (m_strLogoPath.IsEmpty())
-  {
-    return;
-  }
-
-  vector<A1TVChannel>::iterator channel;
-  for(channel = m_channels.begin(); channel < m_channels.end(); channel++)
-  {
-    channel->strLogoPath = PathCombine(m_strLogoPath, channel->strTvgLogo);
-    channel->strLogoPath.append(CHANNEL_LOGO_EXTENSION);
-  }
-}
-
-void A1TVData::ReaplyChannelsLogos(const char * strNewPath)
-{
-  if (strlen(strNewPath) > 0)
-  {
-    m_strLogoPath = strNewPath;
-    ApplyChannelsLogos();
-
-    PVR->TriggerChannelUpdate();
-    PVR->TriggerChannelGroupsUpdate();
-  }
-
-  return;
-}
-
-void A1TVData::ReloadEPG(const char * strNewPath)
-{
-  if (strNewPath != m_strXMLTVUrl)
-  {
-    m_strXMLTVUrl = strNewPath;
-    m_bEGPLoaded = false;
-    // TODO clear epg for all channels
-
-    if (LoadEPG(m_iLastStart, m_iLastEnd))
-    {
-      for(unsigned int iChannelPtr = 0, max = m_channels.size(); iChannelPtr < max; iChannelPtr++)
-      {
-        A1TVChannel &myChannel = m_channels.at(iChannelPtr);
-        PVR->TriggerEpgUpdate(myChannel.iUniqueId);
-      }
-    }
-  }
-}
-
-void A1TVData::ReloadPlayList(const char * strNewPath)
-{
-  if (strNewPath != m_strM3uUrl)
-  {
-    m_strM3uUrl = strNewPath;
-    m_channels.clear();
-
-    if (LoadPlayList())
-    {
-      PVR->TriggerChannelUpdate();
-      PVR->TriggerChannelGroupsUpdate();
-    }
-  }
-}
 
 CStdString A1TVData::ReadMarkerValue(std::string &strLine, const char* strMarkerName)
 {
@@ -976,4 +282,15 @@ CStdString A1TVData::ReadMarkerValue(std::string &strLine, const char* strMarker
   }
 
   return std::string("");
+}
+
+std::string A1TVData::GetChannelFile() const
+{
+  string settingFile = g_strClientPath;
+  if (settingFile.at(settingFile.size() - 1) == '\\' ||
+      settingFile.at(settingFile.size() - 1) == '/')
+    settingFile.append("channels.json");
+  else
+    settingFile.append("/channels.json");
+  return settingFile;
 }

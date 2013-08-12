@@ -38,7 +38,7 @@ bool           m_bCreated       = false;
 ADDON_STATUS   m_CurStatus      = ADDON_STATUS_UNKNOWN;
 A1TVData   *m_data           = NULL;
 bool           m_bIsPlaying     = false;
-A1TVChannel m_currentChannel;
+PVR_CHANNEL m_currentChannel;
 
 /* User adjustable settings are saved here.
  * Default values are defined inside client.h
@@ -50,9 +50,7 @@ std::string g_strClientPath = "";
 CHelper_libXBMC_addon *XBMC = NULL;
 CHelper_libXBMC_pvr   *PVR  = NULL;
 
-std::string g_strTvgPath    = "";
-std::string g_strM3UPath    = "";
-std::string g_strLogoPath   = "";
+
 int         g_iEPGTimeShift = 0;
 bool        g_bTSOverride   = true;
 
@@ -86,10 +84,10 @@ extern std::string GetUserFilePath(const std::string &strFileName)
 extern "C" {
 
 void ADDON_ReadSettings(void)
-{
+{/*
   char buffer[1024];
   int iPathType = 0;
-  if (!XBMC->GetSetting("m3uPathType", &iPathType)) 
+  if (!XBMC->GetSetting("channelListFile", &iPathType)) 
   {
     iPathType = 1;
   }
@@ -101,42 +99,8 @@ void ADDON_ReadSettings(void)
   if (g_strM3UPath == "") 
   {
     g_strM3UPath = GetClientFilePath(M3U_FILE_NAME);
-  }
-
-  if (!XBMC->GetSetting("epgPathType", &iPathType)) 
-  {
-    iPathType = 1;
-  }
-  strSettingName = iPathType ? "epgUrl" : "epgPath";
-  if (XBMC->GetSetting(strSettingName, &buffer)) 
-  {
-    g_strTvgPath = buffer;
-  }
-  // BUG! xbmc does not return slider value 
-  //float dTimeShift;
-  //if (XBMC->GetSetting("epgTimeShift", &dTimeShift))
-  //{
-  //  g_iEPGTimeShift = (int)(dTimeShift * 3600.0); // hours to seconds
-  //}
-  int itmpShift;
-  if (XBMC->GetSetting("epgTimeShift_", &itmpShift))
-  {
-    itmpShift -= 12;
-    g_iEPGTimeShift = (int)(itmpShift * 3600.0); // hours to seconds
-  }
-  if (!XBMC->GetSetting("epgTSOverride", &g_bTSOverride))
-  {
-    g_bTSOverride = true;
-  }
-    
-  if (XBMC->GetSetting("logoPath", &buffer))
-  {
-    g_strLogoPath = buffer;
-  }
-  if (g_strLogoPath == "")
-  {
-    g_strLogoPath = GetClientFilePath("icons/");
-  }
+  }*/
+  
 }
 
 ADDON_STATUS ADDON_Create(void* hdl, void* props)
@@ -163,7 +127,7 @@ ADDON_STATUS ADDON_Create(void* hdl, void* props)
     return ADDON_STATUS_PERMANENT_FAILURE;
   }
 
-  XBMC->Log(LOG_DEBUG, "%s - Creating the PVR IPTV Simple add-on", __FUNCTION__);
+  XBMC->Log(LOG_DEBUG, "%s - Creating the A1TV IPTV add-on", __FUNCTION__);
 
   m_CurStatus     = ADDON_STATUS_UNKNOWN;
   g_strUserPath   = pvrprops->strUserPath;
@@ -212,7 +176,7 @@ unsigned int ADDON_GetSettings(ADDON_StructSetting ***sSet)
 ADDON_STATUS ADDON_SetSetting(const char *settingName, const void *settingValue)
 {
   // reset cache and restart addon 
-
+/*
   string strFile = GetUserFilePath(M3U_FILE_NAME);
   if (XBMC->FileExists(strFile.c_str(), false))
   {
@@ -231,7 +195,7 @@ ADDON_STATUS ADDON_SetSetting(const char *settingName, const void *settingValue)
 #else
     XBMC->DeleteFile(strFile.c_str());
 #endif
-  }
+  }*/
 
   return ADDON_STATUS_NEED_RESTART;
 }
@@ -281,8 +245,8 @@ PVR_ERROR GetAddonCapabilities(PVR_ADDON_CAPABILITIES* pCapabilities)
 {
   pCapabilities->bSupportsEPG             = true;
   pCapabilities->bSupportsTV              = true;
-  pCapabilities->bSupportsRadio           = true;
-  pCapabilities->bSupportsChannelGroups   = true;
+  pCapabilities->bSupportsRadio           = false;
+  pCapabilities->bSupportsChannelGroups   = false;
   pCapabilities->bSupportsRecordings      = false;
 
   return PVR_ERROR_NO_ERROR;
@@ -341,13 +305,17 @@ bool OpenLiveStream(const PVR_CHANNEL &channel)
 {
   if (m_data)
   {
-    CloseLiveStream();
+    //improves channel switching time when not closed:
+    //CloseLiveStream();
 
-    if (m_data->GetChannel(channel, m_currentChannel))
+   /* if (m_data->GetChannel(channel, m_currentChannel))
     {
       m_bIsPlaying = true;
       return true;
-    }
+    }*/
+    m_currentChannel=channel;
+    return true;
+
   }
 
   return false;
@@ -365,7 +333,8 @@ int GetCurrentClientChannel(void)
 
 bool SwitchChannel(const PVR_CHANNEL &channel)
 {
-  CloseLiveStream();
+  //not closing the stream decreases channel switch time
+  //CloseLiveStream();
 
   return OpenLiveStream(channel);
 }
@@ -373,30 +342,6 @@ bool SwitchChannel(const PVR_CHANNEL &channel)
 PVR_ERROR GetStreamProperties(PVR_STREAM_PROPERTIES* pProperties)
 {
   return PVR_ERROR_NOT_IMPLEMENTED;
-}
-
-int GetChannelGroupsAmount(void)
-{
-  if (m_data)
-    return m_data->GetChannelGroupsAmount();
-
-  return -1;
-}
-
-PVR_ERROR GetChannelGroups(ADDON_HANDLE handle, bool bRadio)
-{
-  if (m_data)
-    return m_data->GetChannelGroups(handle, bRadio);
-
-  return PVR_ERROR_SERVER_ERROR;
-}
-
-PVR_ERROR GetChannelGroupMembers(ADDON_HANDLE handle, const PVR_CHANNEL_GROUP &group)
-{
-  if (m_data)
-    return m_data->GetChannelGroupMembers(handle, group);
-
-  return PVR_ERROR_SERVER_ERROR;
 }
 
 PVR_ERROR SignalStatus(PVR_SIGNAL_STATUS &signalStatus)
@@ -449,4 +394,9 @@ void PauseStream(bool bPaused) {}
 bool CanSeekStream(void) { return false; }
 bool SeekTime(int,bool,double*) { return false; }
 void SetSpeed(int) {};
+
+int GetChannelGroupsAmount(void){ return 0; }
+PVR_ERROR GetChannelGroups(ADDON_HANDLE handle, bool bRadio){ return PVR_ERROR_NOT_IMPLEMENTED; }
+PVR_ERROR GetChannelGroupMembers(ADDON_HANDLE handle, const PVR_CHANNEL_GROUP& group){ return PVR_ERROR_NOT_IMPLEMENTED; }
+
 }

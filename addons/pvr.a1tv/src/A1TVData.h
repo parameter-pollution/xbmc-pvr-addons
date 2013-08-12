@@ -24,54 +24,13 @@
  */
 
 #include <vector>
+#include <map>
+#include <json/json.h>
 #include "platform/util/StdString.h"
 #include "client.h"
 #include "platform/threads/threads.h"
-
-struct A1TVEpgEntry
-{
-  int         iBroadcastId;
-  int         iChannelId;
-  int         iGenreType;
-  int         iGenreSubType;
-  time_t      startTime;
-  time_t      endTime;
-  std::string strTitle;
-  std::string strPlotOutline;
-  std::string strPlot;
-  std::string strIconPath;
-  std::string strGenreString;
-};
-
-struct A1TVEpgChannel
-{
-  std::string                  strId;
-  std::string                  strName;
-  std::vector<A1TVEpgEntry> epg;
-};
-
-struct A1TVChannel
-{
-  bool        bRadio;
-  int         iUniqueId;
-  int         iChannelNumber;
-  int         iEncryptionSystem;
-  int         iTvgShift;
-  std::string strChannelName;
-  std::string strLogoPath;
-  std::string strStreamURL;
-  std::string strTvgId;
-  std::string strTvgName;
-  std::string strTvgLogo;
-};
-
-struct A1TVChannelGroup
-{
-  bool              bRadio;
-  int               iGroupId;
-  std::string       strGroupName;
-  std::vector<int>  members;
-};
+#include "xbmc_pvr_types.h"
+#include "xbmc_epg_types.h"
 
 class A1TVData : public PLATFORM::CThread
 {
@@ -81,30 +40,19 @@ public:
 
   virtual int       GetChannelsAmount(void);
   virtual PVR_ERROR GetChannels(ADDON_HANDLE handle, bool bRadio);
-  virtual bool      GetChannel(const PVR_CHANNEL &channel, A1TVChannel &myChannel);
-  virtual int       GetChannelGroupsAmount(void);
-  virtual PVR_ERROR GetChannelGroups(ADDON_HANDLE handle, bool bRadio);
-  virtual PVR_ERROR GetChannelGroupMembers(ADDON_HANDLE handle, const PVR_CHANNEL_GROUP &group);
+  virtual bool      GetChannel(const PVR_CHANNEL &channel, PVR_CHANNEL &myChannel);
   virtual PVR_ERROR GetEPGForChannel(ADDON_HANDLE handle, const PVR_CHANNEL &channel, time_t iStart, time_t iEnd);
-  virtual void      ReaplyChannelsLogos(const char * strNewPath);
-  virtual void      ReloadPlayList(const char * strNewPath);
-  virtual void      ReloadEPG(const char * strNewPath);
+  virtual std::string GetChannelFile() const;
 
 protected:
-  virtual bool                 LoadPlayList(void);
-  virtual bool                 LoadEPG(time_t iStart, time_t iEnd);
-  virtual int                  GetFileContents(CStdString& url, std::string &strContent);
-  virtual A1TVChannel      *FindChannel(const std::string &strId, const std::string &strName);
-  virtual A1TVChannelGroup *FindGroup(const std::string &strName);
-  virtual A1TVEpgChannel   *FindEpg(const std::string &strId);
-  virtual A1TVEpgChannel   *FindEpgForChannel(A1TVChannel &channel);
-  virtual int                  ParseDateTime(CStdString strDate, bool iDateFormat = true);
-  virtual bool                 GzipInflate( const std::string &compressedBytes, std::string &uncompressedBytes);
-  virtual int                  GetCachedFileContents(const std::string &strCachedName, const std::string &strFilePath, std::string &strContent);
-  virtual void                 ApplyChannelsLogos();
+  virtual bool                 LoadChannelList(void);
+  virtual int                  GetFileContents(std::string url, std::string &strContent);
+  virtual bool                 GetJson(std::string url, Json::Value &response);
+  virtual void                 DeepCopyChannel(PVR_CHANNEL &src, PVR_CHANNEL &dst);
+
+  virtual time_t               ParseEPGDate(CStdString strDate);
+  virtual int                  GetGenreType( std::string strGenre);
   virtual CStdString           ReadMarkerValue(std::string &strLine, const char * strMarkerName);
-
-protected:
   virtual void *Process(void);
 
 private:
@@ -113,10 +61,9 @@ private:
   int                               m_iEPGTimeShift;
   int                               m_iLastStart;
   int                               m_iLastEnd;
-  CStdString                        m_strXMLTVUrl;
   CStdString                        m_strM3uUrl;
   CStdString                        m_strLogoPath;
-  std::vector<A1TVChannelGroup>  m_groups;
-  std::vector<A1TVChannel>       m_channels;
-  std::vector<A1TVEpgChannel>    m_epg;
+  std::vector<PVR_CHANNEL>       m_channels;
+  std::vector<EPG_TAG>    m_epg;
+  std::map<std::string, int> genre_map;
 };

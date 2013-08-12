@@ -1,0 +1,4 @@
+[
+	{ "id":1, "number":1, "name":"ORF eins", "streamURL":"rtp://@239.2.16.1:8208", "icon":"http://epggw.a1.net/img/station/darkbg/90x45/1.png"},
+	{ "id":2, "number":2, "name":"ORF 2", "streamURL":"rtp://@239.2.16.2:8208", "icon":"http://epggw.a1.net/img/station/darkbg/90x45/2.png"}
+]
